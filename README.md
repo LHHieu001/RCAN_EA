@@ -15,7 +15,7 @@ python -m torchsr.train --arch rcan_EA --scale 2 --epochs 100 --loss l1 --datase
 ```
 ## Evaluate:
 ```
-python -m torchsr.train --validation-only --arch edsr_EA --scale 2 --dataset-val set5 --chop-size 400 --shave-border 2 --eval-luminance --load-checkpoint ./results/models/*Your model file*
+python -m torchsr.train --validation-only --arch rcan_EA --scale 2 --dataset-val set5 --chop-size 400 --shave-border 2 --eval-luminance --load-checkpoint ./results/models/*Your model file*
 ```
 Bạn có thể sử dụng model được train sẵn tại (100 epochs): [GoogleDrive](https://drive.google.com/file/d/1Av8NDZU8rHd4hcupSDDQ9KwqxpLFHIVX/view?usp=sharing)
 

@@ -1,16 +1,23 @@
+# Implementation from https://github.com/sanghyun-son/EDSR-PyTorch
+# Pretrained models from https://github.com/yulunzhang/RCAN
+## ECCV-2018-Image Super-Resolution Using Very Deep Residual Channel Attention Networks
+## https://arxiv.org/abs/1807.02758
+
 import math
 import torch
 import torch.nn as nn
-import torch.nn.functional as F
-from torch.nn.parameter import Parameter
 from torch.hub import load_state_dict_from_url
 
 __all__ = [
-    "rcan_EA",
+    "rcan",
+    "rcan_g10r20f64",
 ]
 
 url = {
-    
+    "g10r20f64x2": "https://github.com/Coloquinte/torchSR/releases/download/v1.0.3/rcan_x2.pt",
+    "g10r20f64x3": "https://github.com/Coloquinte/torchSR/releases/download/v1.0.3/rcan_x3.pt",
+    "g10r20f64x4": "https://github.com/Coloquinte/torchSR/releases/download/v1.0.3/rcan_x4.pt",
+    "g10r20f64x8": "https://github.com/Coloquinte/torchSR/releases/download/v1.0.3/rcan_x8.pt",
 }
 
 
@@ -64,63 +71,14 @@ class Upsampler(nn.Sequential):
 
         super(Upsampler, self).__init__(*m)
 
-class EfficientAttention(nn.Module):
-    def __init__(self, in_channels, key_channels, head_count, value_channels):
-        super().__init__()
-        self.in_channels = in_channels
-        self.key_channels = key_channels
-        self.head_count = head_count
-        self.value_channels = value_channels
 
-        self.keys = nn.Conv2d(in_channels, key_channels, 1)
-        self.queries = nn.Conv2d(in_channels, key_channels, 1)
-        self.values = nn.Conv2d(in_channels, value_channels, 1)
-        self.reprojection = nn.Conv2d(value_channels, in_channels, 1)
-
-    def forward(self, input_):
-        n, _, h, w = input_.size()
-        keys = self.keys(input_).reshape((n, self.key_channels, h * w))
-        queries = self.queries(input_).reshape(n, self.key_channels, h * w)
-        values = self.values(input_).reshape((n, self.value_channels, h * w))
-        
-        head_key_channels = self.key_channels // self.head_count
-        head_value_channels = self.value_channels // self.head_count
-        
-        attended_values = []
-        for i in range(self.head_count):
-            key = F.softmax(keys[
-                :,
-                i * head_key_channels: (i + 1) * head_key_channels,
-                :
-            ], dim=2)
-            query = F.softmax(queries[
-                :,
-                i * head_key_channels: (i + 1) * head_key_channels,
-                :
-            ], dim=1)
-            value = values[
-                :,
-                i * head_value_channels: (i + 1) * head_value_channels,
-                :
-            ]
-            context = key @ value.transpose(1, 2)
-            attended_value = (
-                context.transpose(1, 2) @ query
-            ).reshape(n, head_value_channels, h, w)
-            attended_values.append(attended_value)
-
-        aggregated_values = torch.cat(attended_values, dim=1)
-        # reprojected_value = self.reprojection(aggregated_values)
-        reprojected_value = torch.sigmoid(self.reprojection(aggregated_values))
-        attention = reprojected_value * input_
-
-        return attention
-
-class CALayer_En(nn.Module):
+## Channel Attention (CA) Layer
+class CALayer(nn.Module):
     def __init__(self, channel, reduction=16):
-        super(CALayer_En, self).__init__()
+        super(CALayer, self).__init__()
+        # global average pooling: feature --> point
         self.avg_pool = nn.AdaptiveAvgPool2d(1)
-        self.max_pool = nn.AdaptiveMaxPool2d(1)
+        # feature channel downscale and upscale --> channel weight
         self.conv_du = nn.Sequential(
             nn.Conv2d(channel, channel // reduction, 1, padding=0, bias=True),
             nn.ReLU(inplace=True),
@@ -129,15 +87,12 @@ class CALayer_En(nn.Module):
         )
 
     def forward(self, x):
-        avg_out = self.conv_du(self.avg_pool(x))
-        max_out = self.conv_du(self.max_pool(x))
-        out = avg_out + max_out
-        return x * out
-    
+        y = self.avg_pool(x)
+        y = self.conv_du(y)
+        return x * y
 
 
-
-
+## Residual Channel Attention Block (RCAB)
 class RCAB(nn.Module):
     def __init__(
         self,
@@ -150,36 +105,20 @@ class RCAB(nn.Module):
         act=nn.ReLU(True),
     ):
         super(RCAB, self).__init__()
-        
-
-        
         modules_body = []
         for i in range(2):
             modules_body.append(conv(n_feat, n_feat, kernel_size, bias=bias))
+            if bn:
+                modules_body.append(nn.BatchNorm2d(n_feat))
             if i == 0:
                 modules_body.append(act)
-        modules_body.append(CALayer_En(n_feat, reduction))
+        modules_body.append(CALayer(n_feat, reduction))
         self.body = nn.Sequential(*modules_body)
 
-        modules_body_2 = []
-        for i in range(2):
-            modules_body_2.append(conv(n_feat, n_feat, kernel_size, bias=bias))
-            modules_body_2.append(nn.BatchNorm2d(n_feat))
-            if i == 0:
-                modules_body_2.append(nn.GELU())
-        modules_body_2.append(EfficientAttention(in_channels=n_feat, key_channels=n_feat // 2, head_count=4,value_channels=n_feat))
-        self.body_2 = nn.Sequential(*modules_body_2)
-
-        
-    
-    #Method 2: Plus
     def forward(self, x):
         res = self.body(x)
-        res_2 = self.body_2(x)
-        res += res_2
         res += x
         return res
-
 
 
 ## Residual Group (RG)
@@ -201,14 +140,14 @@ class ResidualGroup(nn.Module):
         ]
         modules_body.append(conv(n_feat, n_feat, kernel_size))
         self.body = nn.Sequential(*modules_body)
-        
 
     def forward(self, x):
         res = self.body(x)
         res += x
         return res
-    
-    
+
+
+## Residual Channel Attention Network (RCAN)
 class RCAN(nn.Module):
     def __init__(
         self,
@@ -260,9 +199,6 @@ class RCAN(nn.Module):
 
         self.head = nn.Sequential(*modules_head)
         self.body = nn.Sequential(*modules_body)
-        
-
-        
         self.tail = nn.Sequential(*modules_tail)
 
         if pretrained:
@@ -282,7 +218,6 @@ class RCAN(nn.Module):
 
         return x
 
-
     def load_pretrained(self, map_location=None):
         if self.url is None:
             raise KeyError("No URL available for this model")
@@ -296,12 +231,16 @@ class RCAN(nn.Module):
         self.load_state_dict(state_dict)
 
 
-def rcan_EA(scale, pretrained=False):
+def rcan_g10r20f64(scale, pretrained=False):
     return RCAN(
-        n_resgroups=5,#10
-        n_resblocks=10, #20
+        n_resgroups=10,
+        n_resblocks=20,
         n_feats=64,
         reduction=16,
         scale=scale,
         pretrained=pretrained,
     )
+
+
+def rcan(scale, pretrained=False):
+    return rcan_g10r20f64(scale, pretrained)

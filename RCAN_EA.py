@@ -111,8 +111,8 @@ class EfficientAttention(nn.Module):
 
         aggregated_values = torch.cat(attended_values, dim=1)
         reprojected_value = self.reprojection(aggregated_values)
-        attention = reprojected_value * input_
-        # attention = reprojected_value
+        # attention = reprojected_value * input_
+        reprojected_value = torch.sigmoid(self.reprojection(aggregated_values))
         
         return attention
 

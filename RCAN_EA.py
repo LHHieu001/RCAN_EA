@@ -110,10 +110,10 @@ class EfficientAttention(nn.Module):
             attended_values.append(attended_value)
 
         aggregated_values = torch.cat(attended_values, dim=1)
-        reprojected_value = self.reprojection(aggregated_values)
-        # attention = reprojected_value * input_
+        # reprojected_value = self.reprojection(aggregated_values)
         reprojected_value = torch.sigmoid(self.reprojection(aggregated_values))
-        
+        attention = reprojected_value * input_
+
         return attention
 
 class CALayer_En(nn.Module):

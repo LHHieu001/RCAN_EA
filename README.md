@@ -1,6 +1,6 @@
 # Image Super-Resolution Using Very Deep Residual Channel Attention Networks + Efficient Attention (RCAN_EA)
 
-## Đề tài được xây dựng trên:
+## Đề tài được xây dựng dựa trên:
 *   [TorchSR](https://github.com/Coloquinte/torchSR)
 *   [RCAN](https://github.com/yulunzhang/RCAN)
 *   [EA](https://github.com/cmsflash/efficient-attention)
